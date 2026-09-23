@@ -7,32 +7,28 @@ transport-agnostic JSON command protocol.
 ## Architecture
 
 ```
-tools/claude_bridge.py                      ESP32 firmware
-  - talks to the Claude API (tool calling)     CommandInterface   (parses JSON, Serial/Wi-Fi)
-  - translates each tool call into a               |
-    JSON robot command                             v
+tools/claude_bridge.py                                              ESP32 firmware
+  - talks to the AI API                           CommandInterface   (parses JSON, Serial/Wi-Fi)
+  - translates each tool call into a                                     |
+    JSON command                                                         v
+
                                                   RobotApi          (move / turn / setPose / stop / setGaitSpeed)
-        ---- JSON over USB serial ---->              |
-        {"function":"move","args":{...}}             v
+        ----       JSON   ---->                                          |
+        {"function":"move","args":{...}}                                 v
         <---- {"status":"ok",...} ----             GaitEngine        (trot gait -> per-leg foot trajectories)
-                                                      |
-                                                      v
+                                                                         |
+                                                                         v
                                                   LegKinematics       (per-leg inverse/forward kinematics)
-                                                      |
-                                                      v
+                                                                         |
+                                                                         v
                                                   ServoDriver         (PCA9685 over I2C -> servo pulses)
 ```
 
-The ESP32 **never talks to an LLM API directly** — no Wi-Fi credentials, no
-API keys, no TLS stack on the microcontroller. It only understands a small
+The ESP32 doesn’t talks to an LLM API directly. It only understands a small
 JSON command protocol (`CommandInterface`, documented in
-[include/command_interface.h](include/command_interface.h)). Whatever decides
-*what* the robot should do next — a person typing commands, a scripted
-routine, or a companion process driving Claude's tool-calling — speaks that
-same protocol. This keeps the two concerns cleanly separated: the firmware
-owns "how do I walk," the companion owns "what should I do."
+[include/command_interface.h](include/command_interface.h)). W
 
-Layers, bottom to top:
+## Layers
 
 | Layer | File | Responsibility |
 |---|---|---|
@@ -56,27 +52,23 @@ Requires [PlatformIO](https://platformio.org/) (`pip install platformio`, or use
 ## Testing
 
 The pure-math kinematics module (`LegKinematics`) has no Arduino/ESP32
-dependency by design, so it's unit tested on the host — no hardware needed:
+dependency by design, so it's unit tested on the host
 
 ```bash
 pio test -e native
 ```
 
-This is real coverage, not a formality: it caught a sign error in the
-inverse-kinematics law-of-cosines term during development (the two-link IK
-was solving for the wrong elbow angle on most leg poses). Run it after any
-change to `leg_kinematics.cpp`.
 
 ## Controlling the robot
 
-### Over serial (always available)
+### Over serial
 
 Once flashed, the robot accepts line-delimited JSON commands over USB serial
 at 115200 baud:
 
 ```jsonc
-// → {"id": "1", "function": "move", "args": {"direction": "forward", "speed": 1.0, "duration_ms": 1000}}
-// ← {"id": "1", "status": "ok"}
+//  {"id": "1", "function": "move", "args": {"direction": "forward", "speed": 1.0, "duration_ms": 1000}}
+//  {"id": "1", "status": "ok"}
 ```
 
 Function reference:
@@ -90,8 +82,8 @@ Function reference:
 | `setGaitSpeed` | `speed` (0.1-2) | Changes step cadence for future `move`/`turn` calls. |
 | `status` | — | Health check; no motion. |
 
-You can drive this by hand with any serial terminal (`pio device monitor`,
-`screen`, `minicom`, ...) — it's plain JSON, one line in, one line out.
+You can the serial terminal (`pio device monitor`,
+`screen`, `minicom`, ...) 
 
 ### Optional: over local Wi-Fi
 
@@ -100,7 +92,7 @@ Build with `-D TQD_ENABLE_WIFI_SERVER=1` (see `platformio.ini`) and call
 same protocol over HTTP (`POST /command`, `GET /status`) on the local
 network. Off by default so a pure-USB setup needs no Wi-Fi credentials.
 
-### With Claude
+### Optional: With Claude for example
 
 ```bash
 cd tools
@@ -121,7 +113,7 @@ tool call is translated 1:1 into the JSON serial protocol above. Swapping in
 a different model, a different LLM provider, or a hand-written rule-based
 controller means editing this one script — the firmware doesn't change.
 
-### With OpenAI / function-calling (Codex / ChatGPT)
+### Optional: With OpenAI  (Codex / ChatGPT) for example
 
 An alternative bridge using OpenAI function-calling is provided at
 `tools/openai_bridge.py`. It implements the same JSON command protocol and
@@ -139,16 +131,15 @@ translates that function call into the same serial JSON command the
 firmware expects.
 
 
-## Suggested test sequence
+##  Test sequence
 
 1. Flash the firmware and confirm the PCA9685 responds on I2C (watch the
    Serial monitor for I2C errors at boot).
 2. Send `{"function":"setPose","args":{"pose":"idle"}}` so all servos settle
-   into a neutral pose (fully retracted — safe to power up on a bench without
-   the legs fighting the mounting).
+   into a neutral pose 
 3. Test each motion individually before combining them:
    `{"function":"setPose","args":{"pose":"stand"}}`, then `move` in each of
    the four directions, `turn` left/right, `setPose: sit`, and
    `setGaitSpeed`.
-4. Only after the mechanics are verified on hardware should you connect the
-   Claude bridge and hand control to natural-language commands.
+4. After the mechanics are verified, connect the
+   AI bridge and hand control over to natural-language commands.
